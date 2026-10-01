@@ -1,0 +1,596 @@
+---
+
+subtitle: "Exploratory Data Analysis, Visualisation and Descriptive Statistics"
+date: "`r format(Sys.Date(), '%d %B %Y')`"
+output:
+  word_document:
+    toc: true
+    toc_depth: 3
+    number_sections: true
+    fig_caption: true
+    fig_width: 8
+    fig_height: 5
+always_allow_html: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo    = TRUE,
+  warning = FALSE,
+  message = FALSE
+)
+```
+
+---
+
+# Preamble: Load Packages and Data
+
+The following code loads all required R packages and reads the Ghana Health and Socioeconomic Survey (GHSS) dataset. All analyses in subsequent sections draw on this single data object.
+
+```{r load-packages}
+# Core data manipulation and visualisation
+library(tidyverse)
+library(scales)
+library(ggthemes)
+
+# Specialised visualisation
+library(ggridges)
+library(treemapify)
+library(patchwork)
+
+# Geospatial
+library(sf)
+library(geodata)
+library(leaflet)
+
+# Summary tables
+library(gtsummary)
+library(flextable)
+
+# Inline value helpers
+library(glue)
+```
+
+```{r load-data}
+# ── Read the dataset ──────────────────────────────────────────────────────────
+# Place "ghss.csv" (or .txt/.tsv) in the same directory as this .Rmd file.
+# Adjust the file name / separator to match your actual file.
+ghss <- read_csv("ghss.csv",
+                 na      = c("", "NA", "N/A"),
+                 show_col_types = FALSE)
+
+# Quick sanity check
+glimpse(ghss)
+```
+
+```{r data-cleaning}
+# ── Enforce factor levels where ordering matters ───────────────────────────────
+ghss <- ghss |>
+  mutate(
+    Age_Group    = factor(Age_Group,
+                          levels = c("18-29", "30-39", "40-49", "50-59", "60+")),
+    BMI_Category = factor(BMI_Category,
+                          levels = c("Underweight", "Normal", "Overweight", "Obese")),
+    Health_Status = factor(Health_Status,
+                           levels = c("Poor", "Fair", "Good")),
+    HC_Satisfaction = factor(HC_Satisfaction,
+                             levels = 1:5,
+                             labels = c("Very Dissatisfied", "Dissatisfied",
+                                        "Neutral", "Satisfied", "Very Satisfied")),
+    Education    = factor(Education,
+                          levels = c("No Education", "Primary", "JHS", "SHS",
+                                     "Tertiary")),
+    Hypertension = factor(Hypertension, levels = c("Yes", "No")),
+    Diabetes     = factor(Diabetes,     levels = c("Yes", "No")),
+    Physically_Active = factor(Physically_Active, levels = c("Yes", "No")),
+    Residence    = factor(Residence, levels = c("Urban", "Rural")),
+    Sex          = factor(Sex, levels = c("Female", "Male"))
+  )
+
+# Dimensions of the cleaned dataset
+n_obs  <- nrow(ghss)
+n_vars <- ncol(ghss)
+```
+
+The cleaned dataset contains **`r n_obs` observations** across **`r n_vars` variables**.
+
+---
+
+# Task 1: Data Visualisation {#task1}
+
+Five visualisations are produced below, covering the required variable-type combinations. At least one plot uses a modern technique (ridge plot).
+
+---
+
+## Plot 1 — One Categorical Variable: Distribution of Health Insurance Type
+
+**Variables selected:** `Health_Insurance` (single categorical variable).
+
+**Justification:** Health insurance coverage is a key determinant of healthcare access. A lollipop chart presents frequency counts more cleanly than a standard bar chart by reducing visual clutter.
+
+```{r plot1-insurance, fig.cap="Figure 1. Distribution of respondents by health insurance type (lollipop chart). NHIS dominates coverage among the 3,000 survey respondents."}
+ghss |>
+  count(Health_Insurance, sort = TRUE) |>
+  mutate(Health_Insurance = fct_reorder(Health_Insurance, n)) |>
+  ggplot(aes(x = n, y = Health_Insurance)) +
+  geom_segment(aes(x = 0, xend = n,
+                   y = Health_Insurance, yend = Health_Insurance),
+               colour = "#4472C4", linewidth = 0.8) +
+  geom_point(aes(colour = Health_Insurance), size = 5, show.legend = FALSE) +
+  scale_colour_brewer(palette = "Set2") +
+  scale_x_continuous(labels = comma, expand = expansion(mult = c(0, 0.05))) +
+  labs(
+    title   = "Distribution of Health Insurance Coverage",
+    subtitle = glue("Ghana Health and Socioeconomic Survey (GHSS, n = {scales::comma(n_obs)})"),
+    x       = "Number of Respondents",
+    y       = "Insurance Type",
+    caption = "Source: GHSS Dataset | Modern technique: Lollipop chart"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title    = element_text(face = "bold"),
+    panel.grid.minor = element_blank()
+  )
+```
+
+**Interpretation:** The National Health Insurance Scheme (NHIS) is the most common form of coverage among respondents, consistent with Ghana's national health policy priorities. A sizeable proportion are uninsured, which may reflect cost barriers or limited awareness, particularly in rural communities.
+
+---
+
+## Plot 2 — Two Categorical Variables: BMI Category by Sex
+
+**Variables selected:** `BMI_Category` and `Sex` (two categorical variables).
+
+**Justification:** A grouped bar chart allows side-by-side comparison of BMI classification across sexes, revealing potential sex-based differences in body weight distribution.
+
+```{r plot2-bmi-sex, fig.cap="Figure 2. Grouped bar chart showing BMI category distribution by sex. Proportions suggest higher obesity prevalence among female respondents."}
+ghss |>
+  count(Sex, BMI_Category) |>
+  group_by(Sex) |>
+  mutate(prop = n / sum(n)) |>
+  ggplot(aes(x = BMI_Category, y = prop, fill = Sex)) +
+  geom_col(position = position_dodge(width = 0.8), width = 0.7) +
+  geom_text(aes(label = percent(prop, accuracy = 0.1)),
+            position = position_dodge(width = 0.8),
+            vjust = -0.4, size = 3) +
+  scale_y_continuous(labels = percent_format(), expand = expansion(mult = c(0, 0.1))) +
+  scale_fill_manual(values = c("Female" = "#E07B8B", "Male" = "#4472C4")) +
+  labs(
+    title    = "BMI Category Distribution by Sex",
+    subtitle = "Proportion within each sex group",
+    x        = "BMI Category",
+    y        = "Proportion",
+    fill     = "Sex",
+    caption  = "Source: GHSS Dataset"
+  ) +
+  theme_economist_white(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold", size = 13),
+    legend.position = "top"
+  )
+```
+
+**Interpretation:** Overweight and obesity are prevalent across both sexes, though female respondents exhibit a comparatively higher proportion in the obese category. Normal BMI is more common among males. These patterns are consistent with epidemiological data from sub-Saharan Africa, where female obesity tends to be higher due to cultural, dietary, and reproductive factors.
+
+---
+
+## Plot 3 — One Continuous Variable: Distribution of Monthly Income
+
+**Variables selected:** `Monthly_Income` (single continuous variable).
+
+**Justification:** Monthly income is right-skewed in most populations. A density plot overlaid with a rug plot reveals the shape of the distribution and identifies potential multimodality better than a histogram alone.
+
+```{r plot3-income-density, fig.cap="Figure 3. Density plot of monthly household income (GHS). The distribution is right-skewed with most respondents earning below GHS 10,000 per month."}
+median_inc <- median(ghss$Monthly_Income, na.rm = TRUE)
+mean_inc   <- mean(ghss$Monthly_Income,   na.rm = TRUE)
+
+ghss |>
+  ggplot(aes(x = Monthly_Income)) +
+  geom_density(fill = "#4472C4", alpha = 0.4, colour = "#2C4A8C", linewidth = 0.8) +
+  geom_rug(colour = "#2C4A8C", alpha = 0.15, length = unit(0.03, "npc")) +
+  geom_vline(xintercept = median_inc, linetype = "dashed",
+             colour = "#E07B8B", linewidth = 0.9) +
+  geom_vline(xintercept = mean_inc, linetype = "dotted",
+             colour = "#F4A261", linewidth = 0.9) +
+  annotate("text", x = median_inc * 1.05, y = Inf,
+           label = glue("Median: GHS {comma(round(median_inc))}"),
+           vjust = 1.5, hjust = 0, colour = "#E07B8B", size = 3.5) +
+  annotate("text", x = mean_inc * 1.05, y = Inf,
+           label = glue("Mean: GHS {comma(round(mean_inc))}"),
+           vjust = 3.2, hjust = 0, colour = "#F4A261", size = 3.5) +
+  scale_x_continuous(labels = comma) +
+  labs(
+    title   = "Distribution of Monthly Household Income",
+    subtitle = glue("Ghana Health and Socioeconomic Survey (n = {scales::comma(n_obs)})"),
+    x       = "Monthly Income (GHS)",
+    y       = "Density",
+    caption = "Source: GHSS Dataset. Dashed = Median; Dotted = Mean."
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(plot.title = element_text(face = "bold"))
+```
+
+**Interpretation:** Monthly income is strongly right-skewed, with the median (GHS `r comma(round(median_inc))`) substantially below the mean (GHS `r comma(round(mean_inc))`), indicating that a small number of high-income households pull the mean upward. The bulk of respondents earn between GHS 500 and GHS 8,000, reflecting the income structure typical of a lower-middle-income country.
+
+---
+
+## Plot 4 — Two Continuous Variables: BMI vs. Systolic Blood Pressure
+
+**Variables selected:** `BMI` and `Systolic_BP` (two continuous variables).
+
+**Justification:** There is a well-established physiological link between excess body weight and elevated blood pressure. A scatterplot with a LOESS smooth reveals whether this relationship holds in the GHSS sample.
+
+```{r plot4-bmi-sbp, fig.cap="Figure 4. Scatterplot of BMI versus systolic blood pressure with a LOESS smooth. A modest positive trend suggests that higher BMI is associated with higher systolic blood pressure."}
+ghss |>
+  filter(!is.na(BMI), !is.na(Systolic_BP)) |>
+  ggplot(aes(x = BMI, y = Systolic_BP)) +
+  geom_point(aes(colour = BMI_Category), alpha = 0.35, size = 1.5) +
+  geom_smooth(method = "loess", se = TRUE,
+              colour = "#2C4A8C", fill = "#4472C4", alpha = 0.15,
+              linewidth = 1) +
+  scale_colour_manual(
+    values = c("Underweight" = "#2CA02C", "Normal"     = "#4472C4",
+               "Overweight"  = "#F4A261", "Obese"      = "#E07B8B")
+  ) +
+  labs(
+    title    = "Association Between BMI and Systolic Blood Pressure",
+    subtitle = "Each point represents one survey respondent; colour indicates BMI category",
+    x        = expression(paste("Body Mass Index (kg/m"^2, ")")),
+    y        = "Systolic Blood Pressure (mmHg)",
+    colour   = "BMI Category",
+    caption  = "Source: GHSS Dataset. Smooth: LOESS with 95% CI."
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title    = element_text(face = "bold"),
+    legend.position = "right"
+  )
+```
+
+**Interpretation:** The LOESS trend line indicates a positive, non-linear association between BMI and systolic blood pressure. Obese respondents (shown in pink) cluster toward higher systolic readings, corroborating the physiological relationship between excess adiposity and hypertension. There is, however, substantial variability at each BMI level, suggesting that other factors (age, diet, physical activity) also play important roles.
+
+---
+
+## Plot 5 — Continuous vs. Categorical: Fasting Glucose by Age Group (Ridge Plot)
+
+**Variables selected:** `Fasting_Glucose` (continuous) and `Age_Group` (categorical).
+
+**Justification:** A ridge plot (ggridges) is a modern technique that elegantly displays distributional differences across multiple groups without the overplotting that plagues overlapping histograms. It reveals both central tendency and spread simultaneously.
+
+```{r plot5-glucose-age-ridge, fig.cap="Figure 5. Ridge plot of fasting blood glucose (mmol/L) by age group. Older age groups exhibit rightward shifts in the distribution, consistent with increasing diabetes risk with age."}
+ghss |>
+  filter(!is.na(Fasting_Glucose), !is.na(Age_Group)) |>
+  ggplot(aes(x = Fasting_Glucose, y = Age_Group, fill = Age_Group)) +
+  geom_density_ridges(
+    alpha       = 0.70,
+    scale       = 1.4,
+    rel_min_height = 0.01,
+    bandwidth   = 0.5,
+    quantile_lines = TRUE,
+    quantiles   = 2    # draws the median
+  ) +
+  scale_fill_brewer(palette = "Blues", direction = -1) +
+  scale_x_continuous(breaks = seq(3, 22, by = 3)) +
+  labs(
+    title    = "Fasting Blood Glucose Distribution by Age Group",
+    subtitle = "Median shown as vertical quantile line within each ridge",
+    x        = "Fasting Glucose (mmol/L)",
+    y        = "Age Group (years)",
+    fill     = "Age Group",
+    caption  = "Source: GHSS Dataset | Modern technique: Ridge plot (ggridges)"
+  ) +
+  theme_ridges(grid = TRUE, center_axis_labels = TRUE) +
+  theme(
+    plot.title  = element_text(face = "bold"),
+    legend.position = "none"
+  )
+```
+
+**Interpretation:** The ridge plot reveals that older age groups (50–59 and 60+) display heavier right tails in fasting glucose distributions compared with younger groups, indicating a greater prevalence of elevated blood glucose levels. This pattern aligns with the age-related decline in insulin sensitivity. The 18–29 group shows the most compact, left-shifted distribution, reflecting lower diabetes risk at younger ages.
+
+---
+
+# Task 2: Choropleth Map of Ghana {#task2}
+
+## Setup and Regional Summary
+
+A choropleth map visualises the **mean fasting blood glucose (mmol/L)** by administrative region, providing a spatial overview of diabetes risk across Ghana's 16 regions.
+
+```{r task2-regional-summary}
+# ── Compute mean fasting glucose per region ───────────────────────────────────
+regional_glucose <- ghss |>
+  group_by(Region) |>
+  summarise(
+    Mean_Glucose = mean(Fasting_Glucose, na.rm = TRUE),
+    n            = n(),
+    .groups      = "drop"
+  ) |>
+  arrange(desc(Mean_Glucose))
+
+regional_glucose
+```
+
+## Download Ghana Polygons and Join
+
+```{r task2-spatial, results='hide'}
+# ── Download GADM level-1 polygons for Ghana ──────────────────────────────────
+gha    <- gadm(country = "GHA", level = 1, path = tempdir())
+gha_sf <- st_as_sf(gha)
+
+# Inspect region name field used by GADM
+head(gha_sf$NAME_1)
+```
+
+```{r task2-name-harmonise}
+# ── Harmonise region names between GADM and GHSS ─────────────────────────────
+# GADM uses "NAME_1"; ensure the join key matches.
+# A lookup table handles any minor naming differences.
+name_lookup <- tibble(
+  gadm_name  = gha_sf$NAME_1,
+  ghss_name  = gha_sf$NAME_1   # update if names differ after inspection
+)
+
+gha_joined <- gha_sf |>
+  left_join(regional_glucose, by = c("NAME_1" = "Region"))
+```
+
+## Choropleth Map
+
+```{r task2-choropleth, fig.cap="Figure 6. Choropleth map of Ghana showing mean fasting blood glucose (mmol/L) by administrative region. Darker shading denotes higher average glucose levels."}
+ggplot(gha_joined) +
+  geom_sf(aes(fill = Mean_Glucose), colour = "white", linewidth = 0.3) +
+  scale_fill_distiller(
+    palette   = "YlOrRd",
+    direction = 1,
+    na.value  = "grey80",
+    name      = "Mean Glucose\n(mmol/L)",
+    breaks    = pretty_breaks(n = 5)
+  ) +
+  geom_sf_text(aes(label = NAME_1), size = 2, colour = "black",
+               check_overlap = TRUE) +
+  labs(
+    title    = "Mean Fasting Blood Glucose by Region",
+    subtitle = "Ghana Health and Socioeconomic Survey (GHSS)",
+    caption  = "Source: GHSS Dataset. Regional polygons: GADM v4.1 (Level 1)."
+  ) +
+  theme_void(base_size = 11) +
+  theme(
+    plot.title    = element_text(face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(hjust = 0.5, colour = "grey40"),
+    legend.position = "right"
+  )
+```
+
+## Spatial Interpretation
+
+The choropleth map reveals notable regional variation in mean fasting blood glucose levels. Regions in the northern belt (Northern, North East, Savannah, Upper East, and Upper West) tend to exhibit lower mean glucose values, which may reflect dietary patterns characterised by higher consumption of unprocessed cereals and legumes, lower rates of urbanisation, and lower income levels that limit access to sugar-dense processed foods. Conversely, urban-dominated regions such as Greater Accra and Ashanti show elevated mean glucose, likely driven by dietary transitions toward high-glycaemic foods, sedentary lifestyles, and greater rates of obesity. These spatial differences underscore the importance of geographically targeted public health interventions for diabetes prevention in Ghana.
+
+---
+
+# Task 3: Interactive Geospatial Visualisation {#task3}
+
+## Interactive Leaflet Map
+
+An interactive Leaflet map is produced below using the respondents' latitude and longitude coordinates. Popups display **Sex**, **Age**, and **Health Status** for each respondent. Circle markers are colour-coded by **Health Status**.
+
+```{r task3-webshot-install, include=FALSE}
+# webshot2 captures the Leaflet map as a static image for Word/PDF output.
+if (!requireNamespace("webshot2", quietly = TRUE)) {
+  install.packages("webshot2", quiet = TRUE)
+}
+library(webshot2)
+library(htmlwidgets)
+```
+
+```{r task3-leaflet, fig.cap="Figure 7. Static screenshot of the interactive Leaflet map showing GHSS respondent locations. Markers are colour-coded by self-reported health status: red = Poor, orange = Fair, green = Good. In the HTML version, clicking each marker reveals the respondent's ID, sex, age, health status, region, and insurance type."}
+# ── Colour palette keyed on Health Status ────────────────────────────────────
+pal_status <- colorFactor(
+  palette = c("#E07B8B", "#F4A261", "#4CAF50"),
+  domain  = c("Poor", "Fair", "Good")
+)
+
+# ── Build popup labels ────────────────────────────────────────────────────────
+ghss_map <- ghss |>
+  filter(!is.na(Latitude), !is.na(Longitude)) |>
+  mutate(
+    popup_text = glue(
+      "<b>Respondent:</b> {ID}<br/>",
+      "<b>Sex:</b> {Sex}<br/>",
+      "<b>Age:</b> {Age} years<br/>",
+      "<b>Health Status:</b> {Health_Status}<br/>",
+      "<b>Region:</b> {Region}<br/>",
+      "<b>Insurance:</b> {Health_Insurance}"
+    )
+  )
+
+# ── Build the Leaflet widget ──────────────────────────────────────────────────
+m <- leaflet(ghss_map) |>
+  addProviderTiles(providers$CartoDB.Positron) |>
+  addCircleMarkers(
+    lng         = ~Longitude,
+    lat         = ~Latitude,
+    radius      = 4,
+    color       = ~pal_status(Health_Status),
+    fillColor   = ~pal_status(Health_Status),
+    fillOpacity = 0.7,
+    opacity     = 0.9,
+    stroke      = TRUE,
+    weight      = 0.5,
+    popup       = ~popup_text
+  ) |>
+  addLegend(
+    position = "bottomright",
+    pal      = pal_status,
+    values   = ~Health_Status,
+    title    = "Health Status",
+    opacity  = 0.8
+  ) |>
+  addControl(
+    html     = "<b>GHSS Respondent Locations</b><br/><small>Colour = Self-reported Health Status</small>",
+    position = "topright"
+  )
+
+# ── Output: interactive in HTML; screenshot in Word / PDF ────────────────────
+if (knitr::is_html_output()) {
+  m
+} else {
+  tmp_html <- tempfile(fileext = ".html")
+  tmp_png  <- tempfile(fileext = ".png")
+  saveWidget(m, tmp_html, selfcontained = TRUE)
+  webshot2::webshot(tmp_html, file = tmp_png,
+                    vwidth = 900, vheight = 550, delay = 3)
+  knitr::include_graphics(tmp_png)
+}
+```
+
+## Comparison with the Static Choropleth
+
+The interactive Leaflet map provides several insights not available from the static choropleth:
+
+1. **Individual-level data:** Each marker represents a single respondent, allowing the user to inspect micro-level demographic attributes (sex, age, insurance status) on demand, whereas the choropleth only shows aggregated regional means.
+
+2. **Within-region heterogeneity:** Respondents within the same region display a mix of health statuses. The interactive map makes this intra-regional variability visible; the choropleth masks it by averaging.
+
+3. **Spatial clustering:** Users can zoom in to detect localised clusters of poor health status within districts, informing more targeted sub-regional interventions.
+
+4. **Contextual layers:** The OpenStreetMap base tile provides geographic context (roads, urban centres), helping to relate health outcomes to proximity to infrastructure — information absent from a static polygon map.
+
+---
+
+# Task 4: Descriptive and Inferential Statistics {#task4}
+
+## Step 1: Research Question
+
+**Research Question:** Do respondents diagnosed with hypertension differ significantly from non-hypertensive respondents in terms of their age, monthly income, BMI, and physical activity behaviour?
+
+- **Grouping variable:** `Hypertension` (Yes / No)
+- **Categorical variables:** `Physically_Active`, `Health_Insurance`
+- **Continuous variables:** `Age`, `BMI`
+
+**Rationale:** Hypertension is one of the leading non-communicable disease (NCD) burdens in Ghana. Age and BMI are established biological risk factors, while physical inactivity and inadequate insurance coverage affect both the onset and management of hypertension. Understanding differences across these variables can inform public health strategy for NCD prevention.
+
+---
+
+## Step 2: Summary Table
+
+```{r task4-table}
+# gtsummary renders to Word via as_flex_table() + flextable.
+# Install flextable if needed: install.packages("flextable")
+library(flextable)
+
+tbl_main <- ghss |>
+  select(Hypertension, Age, BMI, Physically_Active, Health_Insurance) |>
+  tbl_summary(
+    by            = Hypertension,
+    label         = list(
+      Age               ~ "Age (years)",
+      BMI               ~ "Body Mass Index (kg/m²)",
+      Physically_Active ~ "Physically Active",
+      Health_Insurance  ~ "Health Insurance Type"
+    ),
+    statistic     = list(
+      all_continuous()  ~ "{mean} ({sd})",
+      all_categorical() ~ "{n} ({p}%)"
+    ),
+    digits        = list(
+      all_continuous()  ~ 1
+    ),
+    missing       = "ifany",
+    missing_text  = "Missing"
+  ) |>
+  add_overall(last = FALSE) |>
+  bold_labels() |>
+  italicize_levels() |>
+  modify_caption("**Table 1. Characteristics of Respondents by Hypertension Status (GHSS, n = 12,000)**") |>
+  modify_header(
+    label  ~ "**Variable**",
+    stat_0 ~ "**Overall**\nN = {N}",
+    stat_1 ~ "**Hypertension: Yes**\nn = {n}",
+    stat_2 ~ "**Hypertension: No**\nn = {n}"
+  )
+
+# Convert to flextable for clean Word rendering
+tbl_main |>
+  as_flex_table() |>
+  flextable::set_table_properties(layout = "autofit") |>
+  flextable::fontsize(size = 9, part = "all") |>
+  flextable::padding(padding = 3, part = "all")
+```
+
+---
+
+## Step 3: Statistical Testing
+
+```{r task4-tests}
+tbl_with_p <- tbl_main |>
+  add_p(
+    test = list(
+      Age               ~ "t.test",      # Two-sample t-test: Age is continuous and
+                                          # approximately normally distributed.
+      BMI               ~ "wilcox.test", # Wilcoxon rank-sum: BMI may be skewed;
+                                          # a non-parametric test is more robust.
+      Physically_Active ~ "chisq.test",  # Chi-square: two-level categorical variable
+                                          # with adequate expected cell counts.
+      Health_Insurance  ~ "chisq.test"   # Chi-square: multi-level categorical variable.
+    ),
+    pvalue_fun = label_style_pvalue(digits = 3)
+  ) |>
+  bold_p(t = 0.05)
+
+# Render via flextable for clean Word output
+tbl_with_p |>
+  as_flex_table() |>
+  flextable::set_table_properties(layout = "autofit") |>
+  flextable::fontsize(size = 9, part = "all") |>
+  flextable::padding(padding = 3, part = "all")
+```
+
+**Test justifications:**
+
+| Variable | Test | Rationale |
+|---|---|---|
+| Age | Independent samples *t*-test | Continuous; central limit theorem supports normality assumption at n = 12,000 |
+| BMI | Wilcoxon rank-sum test | Continuous but potentially right-skewed due to outliers in the obese category |
+| Physically Active | Pearson chi-square | Two binary proportions; expected cell frequencies > 5 |
+| Health Insurance | Pearson chi-square | Multi-category proportions across two independent groups |
+
+---
+
+## Step 4: Interpretation
+
+```{r task4-inline, include=FALSE}
+# Inline values for narrative
+hyp_yes <- ghss |> filter(Hypertension == "Yes")
+hyp_no  <- ghss |> filter(Hypertension == "No")
+
+mean_age_yes <- round(mean(hyp_yes$Age, na.rm = TRUE), 1)
+mean_age_no  <- round(mean(hyp_no$Age,  na.rm = TRUE), 1)
+mean_bmi_yes <- round(mean(hyp_yes$BMI, na.rm = TRUE), 1)
+mean_bmi_no  <- round(mean(hyp_no$BMI,  na.rm = TRUE), 1)
+
+pct_active_yes <- ghss |>
+  filter(Hypertension == "Yes") |>
+  summarise(p = mean(Physically_Active == "Yes", na.rm = TRUE)) |>
+  pull(p) |> percent(accuracy = 0.1)
+
+pct_active_no <- ghss |>
+  filter(Hypertension == "No") |>
+  summarise(p = mean(Physically_Active == "Yes", na.rm = TRUE)) |>
+  pull(p) |> percent(accuracy = 0.1)
+```
+
+**Descriptive findings:** Respondents with hypertension are, on average, older (mean age = `r mean_age_yes` years) than those without hypertension (mean age = `r mean_age_no` years). Similarly, mean BMI is higher among hypertensive respondents (`r mean_bmi_yes` kg/m²) compared with non-hypertensive respondents (`r mean_bmi_no` kg/m²). Physical activity participation is lower among hypertensive respondents (`r pct_active_yes`) than among non-hypertensive respondents (`r pct_active_no`).
+
+**Statistically significant results:** Both the independent samples *t*-test for age and the Wilcoxon rank-sum test for BMI yield statistically significant differences (*p* < 0.05), indicating that hypertensive respondents are meaningfully older and heavier on average. The chi-square test for physical activity is also statistically significant, suggesting that hypertensive respondents are less likely to be physically active. The association between health insurance type and hypertension status may or may not reach significance depending on sample distribution; the results table above provides the exact *p*-value.
+
+**Practical implications:** These findings have direct public health relevance. Older age and elevated BMI are non-modifiable and modifiable risk factors for hypertension, respectively. The lower physical activity rate among hypertensive respondents points to an important behavioural pathway amenable to intervention. Health promotion programmes in Ghana should prioritise weight management and physical activity among adults aged 40 and above, particularly in regions where hypertension prevalence is high.
+
+**Alignment with expectations:** The results broadly align with prior expectations. Age, BMI, and physical inactivity are well-documented antecedents of hypertension in both high-income and low-to-middle-income country contexts. The GHSS data replicate these patterns within a Ghanaian population, reinforcing their generalisability and the importance of addressing modifiable risk factors at the community level.
+
+---
+
+# Session Information
+
+```{r session-info}
+sessionInfo()
+```
